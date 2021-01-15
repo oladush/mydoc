@@ -1,6 +1,7 @@
 from tkinter import Tk, Menu, Canvas, Toplevel, filedialog
 from PIL import ImageTk, Image
-import PyPDF2
+import zlib
+import PyPDF2, traceback
 import ctypes
 import io
 
@@ -10,12 +11,14 @@ MAX_WIDTH = 1000
 MAX_HEIGHT = 1000
 ctypes.windll.shcore.SetProcessDpiAwareness(True)
 
+
 class ImageViewerGui:
     def __init__(self, master, images, information):
         self.page = 0
         self.master = master
         self.images = images
         self.information = information
+        self.not_found_image = Image.open("icon.png") # fix it
 
         self.canvas = None
         self.set_image(images[self.page])
@@ -31,6 +34,9 @@ class ImageViewerGui:
         self.menu.add_command(label="Next page", command=self.next_page)
 
     def set_image(self, img):
+        if not img:
+            img = self.not_found_image
+
         width, height = img.size
         rat = width / height
         if width > MAX_WIDTH:
@@ -118,20 +124,47 @@ class ImageViewerApp:
 
             for i in range(pdf.numPages):
                 page = pdf.getPage(i)
-                xObject = page['/Resources']['/XObject'].getObject()
 
-                for obj in xObject:
-                    if xObject[obj]['/Subtype'] == '/Image':
-                        size = (xObject[obj]['/Width'], xObject[obj]['/Height'])
-                        data = xObject[obj].getData()
+                if '/XObject' in page['/Resources']:
+                    try:
+                        xObject = page['/Resources']['/XObject'].getObject()
+                    except:
+                        xObject = []
 
-                        if xObject[obj]['/ColorSpace'] == '/DeviceRGB':
-                            mode = 'RGB'
-                        else:
-                            mode = 'P'
-                        if xObject[obj]['/Filter'] == '/FlateDecode':
-                            img = Image.frombytes(mode, size, data)
-                            self.content.append(img)
+                    for obj in xObject:
+                        sub_obj = xObject[obj]
+                        if sub_obj['/Subtype'] == '/Image':
+                            try:
+                                if '/FlateDecode' in sub_obj.get('/Filter', ''):
+                                    sub_obj._data = zlib.decompress(sub_obj._data)
+                            except:
+                                pass
+
+                            size = (sub_obj['/Width'], sub_obj['/Height'])
+                            data = sub_obj._data
+
+                            try:
+                                if sub_obj['/ColorSpace'] == '/DeviceRGB':
+                                    mode = "RGB"
+                                elif sub_obj['/ColorSpace'] == '/DeviceCMYK':
+                                    mode = "CMYK"
+                                else:
+                                    mode = "P"
+
+                                if sub_obj['/Filter'] == '/FlateDecode':
+                                    img = Image.frombytes(mode, size, data)
+
+                                elif sub_obj['/Filter'] in [
+                                    '/DCTDecode', '/JPXDecode',
+                                    '/CCITTFaxDecode', '/LZWDecode'
+                                ]:
+                                    img = Image.open(io.BytesIO(data))
+                            except:
+                                img = None
+                                traceback.print_exc()
+                else:
+                    img = None
+                self.content.append(img)
         else:
             img = Image.open(file)
             self.content.append(img)
