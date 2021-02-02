@@ -1,3 +1,5 @@
+import os
+
 MAX_LINES = 5
 
 class ConsoleFileMenu:
